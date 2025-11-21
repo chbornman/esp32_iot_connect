@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flex_color_picker/flex_color_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   runApp(const MyApp());
@@ -34,14 +35,19 @@ class BluetoothScannerPage extends StatefulWidget {
 class _BluetoothScannerPageState extends State<BluetoothScannerPage> {
   List<ScanResult> scanResults = [];
   bool isScanning = false;
+  bool isAutoConnecting = false;
 
   // Filter for specific device name
   static const String TARGET_DEVICE_NAME = "SusanESP";
+
+  // SharedPreferences key for saved device
+  static const String SAVED_DEVICE_KEY = "saved_device_address";
 
   @override
   void initState() {
     super.initState();
     _requestPermissions();
+    _tryAutoConnect();
 
     // Listen to scan results and filter for target device
     FlutterBluePlus.scanResults.listen((results) {
@@ -63,6 +69,108 @@ class _BluetoothScannerPageState extends State<BluetoothScannerPage> {
         });
       }
     });
+  }
+
+  // Save device address to persistent storage
+  Future<void> _saveDevice(String deviceAddress) async {
+    try {
+      print('[Storage] Saving device address: $deviceAddress');
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(SAVED_DEVICE_KEY, deviceAddress);
+      print('[Storage] Device saved successfully');
+    } catch (e) {
+      print('[Storage] Error saving device: $e');
+      // Non-critical error, continue without saving
+    }
+  }
+
+  // Load saved device address from persistent storage
+  Future<String?> _loadSavedDevice() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final address = prefs.getString(SAVED_DEVICE_KEY);
+      print('[Storage] Loaded saved device: $address');
+      return address;
+    } catch (e) {
+      print('[Storage] Error loading saved device: $e');
+      return null;
+    }
+  }
+
+  // Clear saved device from persistent storage
+  Future<void> _clearSavedDevice() async {
+    try {
+      print('[Storage] Clearing saved device');
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(SAVED_DEVICE_KEY);
+      print('[Storage] Device cleared successfully');
+    } catch (e) {
+      print('[Storage] Error clearing device: $e');
+      // Non-critical error, continue
+    }
+  }
+
+  // Try to auto-connect to saved device
+  Future<void> _tryAutoConnect() async {
+    final savedAddress = await _loadSavedDevice();
+    if (savedAddress == null) {
+      print('[AutoConnect] No saved device found');
+      return;
+    }
+
+    print('[AutoConnect] Attempting to connect to saved device: $savedAddress');
+    setState(() {
+      isAutoConnecting = true;
+    });
+
+    try {
+      // Create a BluetoothDevice from the saved address
+      final device = BluetoothDevice.fromId(savedAddress);
+
+      // Try to connect
+      print('[AutoConnect] Connecting to device...');
+      await device.connect(timeout: const Duration(seconds: 5));
+      print('[AutoConnect] Connected successfully!');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Auto-connected to saved device!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        // Navigate to device control page
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => DeviceControlPage(
+              device: device,
+              onManualDisconnect: _clearSavedDevice,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      print('[AutoConnect] Failed to auto-connect: $e');
+      // Clear the saved device since it's no longer available
+      await _clearSavedDevice();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not connect to saved device. Please scan again.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          isAutoConnecting = false;
+        });
+      }
+    }
   }
 
   Future<void> _requestPermissions() async {
@@ -113,6 +221,9 @@ class _BluetoothScannerPageState extends State<BluetoothScannerPage> {
       await device.connect();
       print('[BLE] Connection successful!');
 
+      // Save the device for auto-reconnect
+      await _saveDevice(device.remoteId.toString());
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -124,7 +235,10 @@ class _BluetoothScannerPageState extends State<BluetoothScannerPage> {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => DeviceControlPage(device: device),
+            builder: (context) => DeviceControlPage(
+              device: device,
+              onManualDisconnect: _clearSavedDevice,
+            ),
           ),
         );
       }
@@ -156,10 +270,36 @@ class _BluetoothScannerPageState extends State<BluetoothScannerPage> {
       ),
       body: Column(
         children: [
+          // Auto-connect indicator
+          if (isAutoConnecting)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              color: Colors.blue.shade100,
+              child: Row(
+                children: [
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Auto-connecting to saved device...',
+                      style: TextStyle(
+                        color: Colors.blue.shade900,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: ElevatedButton.icon(
-              onPressed: isScanning ? null : _startScan,
+              onPressed: (isScanning || isAutoConnecting) ? null : _startScan,
               icon: Icon(isScanning ? Icons.hourglass_empty : Icons.search),
               label: Text(isScanning ? 'Scanning...' : 'Scan for Devices'),
               style: ElevatedButton.styleFrom(
@@ -241,8 +381,13 @@ class _BluetoothScannerPageState extends State<BluetoothScannerPage> {
 // Device Control Page
 class DeviceControlPage extends StatefulWidget {
   final BluetoothDevice device;
+  final Future<void> Function()? onManualDisconnect;
 
-  const DeviceControlPage({super.key, required this.device});
+  const DeviceControlPage({
+    super.key,
+    required this.device,
+    this.onManualDisconnect,
+  });
 
   @override
   State<DeviceControlPage> createState() => _DeviceControlPageState();
@@ -560,6 +705,12 @@ class _DeviceControlPageState extends State<DeviceControlPage> {
     print('[BLE] Disconnecting from ${widget.device.platformName}');
     await widget.device.disconnect();
     print('[BLE] Disconnected successfully');
+
+    // Clear saved device when manually disconnecting
+    if (widget.onManualDisconnect != null) {
+      await widget.onManualDisconnect!();
+    }
+
     if (mounted) {
       Navigator.pop(context);
     }
