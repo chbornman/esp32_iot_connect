@@ -1,0 +1,29 @@
+# ESP-IDF build artifacts
+esp32_iot_program/build/
+esp32_iot_program/.cache/
+esp32_iot_program/sdkconfig
+esp32_iot_program/sdkconfig.old
+esp32_iot_program/dependencies.lock
+esp32_iot_program/managed_components/
+
+# Flutter/Dart artifacts
+flutter_iot_app/.dart_tool/
+flutter_iot_app/build/
+flutter_iot_app/.flutter-plugins
+flutter_iot_app/.flutter-plugins-dependencies
+flutter_iot_app/.packages
+flutter_iot_app/pubspec.lock
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+*.swp
+*.swo
+*~
