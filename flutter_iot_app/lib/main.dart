@@ -35,16 +35,22 @@ class _BluetoothScannerPageState extends State<BluetoothScannerPage> {
   List<ScanResult> scanResults = [];
   bool isScanning = false;
 
+  // Filter for specific device name
+  static const String TARGET_DEVICE_NAME = "SusanESP";
+
   @override
   void initState() {
     super.initState();
     _requestPermissions();
 
-    // Listen to scan results
+    // Listen to scan results and filter for target device
     FlutterBluePlus.scanResults.listen((results) {
       if (mounted) {
         setState(() {
-          scanResults = results;
+          // Filter to only show devices with our target name
+          scanResults = results.where((result) {
+            return result.device.platformName == TARGET_DEVICE_NAME;
+          }).toList();
         });
       }
     });
@@ -164,12 +170,31 @@ class _BluetoothScannerPageState extends State<BluetoothScannerPage> {
           Expanded(
             child: scanResults.isEmpty
                 ? Center(
-                    child: Text(
-                      isScanning
-                          ? 'Scanning for Bluetooth devices...'
-                          : 'No devices found. Tap "Scan for Devices" to start.',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 16),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          isScanning ? Icons.bluetooth_searching : Icons.bluetooth_disabled,
+                          size: 64,
+                          color: Colors.grey,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          isScanning
+                              ? 'Scanning for "$TARGET_DEVICE_NAME"...'
+                              : 'No "$TARGET_DEVICE_NAME" device found.',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          isScanning
+                              ? 'Make sure your device is powered on.'
+                              : 'Tap "Scan for Devices" to start searching.',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 14, color: Colors.grey),
+                        ),
+                      ],
                     ),
                   )
                 : ListView.builder(
