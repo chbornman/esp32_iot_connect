@@ -199,11 +199,27 @@ void lcd_fill_rect(esp_lcd_panel_handle_t panel_handle, int x, int y, int width,
 void lcd_clear_screen(uint16_t color)
 {
     if (screen_obj) {
-        // Convert RGB565 to LVGL color
-        lv_color_t lv_color = lv_color_hex(color);
+        // Extract RGB565 components
+        uint8_t r5 = (color >> 11) & 0x1F;
+        uint8_t g6 = (color >> 5) & 0x3F;
+        uint8_t b5 = color & 0x1F;
+
+        // Convert RGB565 to RGB888 for LVGL
+        uint8_t r8 = (r5 << 3) | (r5 >> 2);  // Replicate top bits
+        uint8_t g8 = (g6 << 2) | (g6 >> 4);
+        uint8_t b8 = (b5 << 3) | (b5 >> 2);
+
+        // Create 24-bit RGB888 hex value for lv_color_hex()
+        uint32_t rgb888 = (r8 << 16) | (g8 << 8) | b8;
+
+        lv_color_t lv_color = lv_color_hex(rgb888);
         lv_obj_set_style_bg_color(screen_obj, lv_color, 0);
         current_color = color;
-        ESP_LOGI(TAG, "Screen cleared to color: 0x%04X", color);
+
+        // Force LVGL to refresh the display
+        lv_refr_now(NULL);
+
+        ESP_LOGI(TAG, "Screen cleared to color: RGB565=0x%04X, RGB888=0x%06X", color, (unsigned int)rgb888);
     }
 }
 
@@ -349,17 +365,40 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
 
         if (param->write.handle == gl_profile_tab[PROFILE_APP_IDX].char_handle_color) {
             ESP_LOGI(TAG, "  -> COLOR CHARACTERISTIC");
-            // Color command: expecting 2 bytes for RGB565 color
+
             if (param->write.len == 2) {
+                // RGB565 format (2 bytes)
                 uint16_t color = (param->write.value[0] << 8) | param->write.value[1];
-                ESP_LOGI(TAG, "  -> Setting screen color to: 0x%04X", color);
-                ESP_LOGI(TAG, "     RGB565: R=%d, G=%d, B=%d",
-                         (color >> 11) & 0x1F,
-                         (color >> 5) & 0x3F,
-                         color & 0x1F);
+                ESP_LOGI(TAG, "  -> RGB565 format: 0x%04X", color);
+                lcd_clear_screen(color);
+            } else if (param->write.len == 6 || param->write.len == 7) {
+                // Hex string format: "RRGGBB" or "#RRGGBB"
+                char hex_str[8] = {0};
+                memcpy(hex_str, param->write.value, param->write.len);
+                hex_str[param->write.len] = '\0';
+
+                // Skip '#' if present
+                char *hex_start = (hex_str[0] == '#') ? hex_str + 1 : hex_str;
+
+                // Parse RGB888 hex string
+                uint32_t rgb888 = strtol(hex_start, NULL, 16);
+                uint8_t r8 = (rgb888 >> 16) & 0xFF;
+                uint8_t g8 = (rgb888 >> 8) & 0xFF;
+                uint8_t b8 = rgb888 & 0xFF;
+
+                // Convert RGB888 to RGB565
+                uint16_t r5 = (r8 >> 3) & 0x1F;
+                uint16_t g6 = (g8 >> 2) & 0x3F;
+                uint16_t b5 = (b8 >> 3) & 0x1F;
+                uint16_t color = (r5 << 11) | (g6 << 5) | b5;
+
+                ESP_LOGI(TAG, "  -> Hex format: %s -> RGB888(0x%06X) -> RGB565(0x%04X)",
+                         hex_str, (unsigned int)rgb888, color);
+                ESP_LOGI(TAG, "     RGB888: R=%d, G=%d, B=%d", r8, g8, b8);
+                ESP_LOGI(TAG, "     RGB565: R=%d, G=%d, B=%d", r5, g6, b5);
                 lcd_clear_screen(color);
             } else {
-                ESP_LOGW(TAG, "  -> ERROR: Invalid color data length: %d (expected 2)", param->write.len);
+                ESP_LOGW(TAG, "  -> ERROR: Invalid color data length: %d (expected 2 for RGB565 or 6/7 for hex)", param->write.len);
             }
         } else if (param->write.handle == gl_profile_tab[PROFILE_APP_IDX].char_handle_text) {
             ESP_LOGI(TAG, "  -> TEXT CHARACTERISTIC");
@@ -570,6 +609,10 @@ void init_lvgl(void)
     lv_obj_set_style_text_font(text_label, &lv_font_montserrat_24, 0);  // 24pt font (enabled via sdkconfig)
     lv_obj_set_width(text_label, LCD_H_RES - 40);  // Wider margin for better readability
     lv_label_set_long_mode(text_label, LV_LABEL_LONG_WRAP);
+
+    // Make label background transparent so screen color shows through
+    lv_obj_set_style_bg_opa(text_label, LV_OPA_TRANSP, 0);
+
     lv_obj_center(text_label);
 
     ESP_LOGI(TAG, "LVGL UI created");
