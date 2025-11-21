@@ -226,6 +226,7 @@ class _DeviceControlPageState extends State<DeviceControlPage> {
   final TextEditingController _textController = TextEditingController();
   BluetoothCharacteristic? _textCharacteristic;
   bool isDiscovering = true;
+  bool isConnected = true;
   String statusMessage = 'Discovering services...';
 
   // ESP32 UUIDs from the C code (short form)
@@ -240,6 +241,44 @@ class _DeviceControlPageState extends State<DeviceControlPage> {
   void initState() {
     super.initState();
     _discoverServices();
+    _setupConnectionListener();
+  }
+
+  void _setupConnectionListener() {
+    print('[BLE] Setting up connection state listener');
+    widget.device.connectionState.listen((BluetoothConnectionState state) {
+      print('[BLE] Connection state changed: $state');
+
+      if (state == BluetoothConnectionState.disconnected) {
+        print('[BLE] Device disconnected!');
+        setState(() {
+          isConnected = false;
+          statusMessage = 'Device disconnected';
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Device disconnected!'),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 3),
+            ),
+          );
+
+          // Navigate back to scanner page after a short delay
+          Future.delayed(const Duration(seconds: 2), () {
+            if (mounted) {
+              Navigator.pop(context);
+            }
+          });
+        }
+      } else if (state == BluetoothConnectionState.connected) {
+        print('[BLE] Device connected');
+        setState(() {
+          isConnected = true;
+        });
+      }
+    });
   }
 
   Future<void> _discoverServices() async {
@@ -370,21 +409,35 @@ class _DeviceControlPageState extends State<DeviceControlPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: Text(
-          widget.device.platformName.isNotEmpty
-              ? widget.device.platformName
-              : 'ESP32 Device',
+        backgroundColor: isConnected
+            ? Theme.of(context).colorScheme.inversePrimary
+            : Colors.red.shade400,
+        title: Row(
+          children: [
+            Icon(
+              isConnected ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                widget.device.platformName.isNotEmpty
+                    ? widget.device.platformName
+                    : 'ESP32 Device',
+              ),
+            ),
+          ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.bluetooth_disabled),
-            onPressed: _disconnect,
-            tooltip: 'Disconnect',
-          ),
+          if (isConnected)
+            IconButton(
+              icon: const Icon(Icons.bluetooth_disabled),
+              onPressed: _disconnect,
+              tooltip: 'Disconnect',
+            ),
         ],
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -393,26 +446,32 @@ class _DeviceControlPageState extends State<DeviceControlPage> {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: isDiscovering
-                    ? Colors.orange.shade100
-                    : (_textCharacteristic != null
-                        ? Colors.green.shade100
-                        : Colors.red.shade100),
+                color: !isConnected
+                    ? Colors.red.shade100
+                    : (isDiscovering
+                        ? Colors.orange.shade100
+                        : (_textCharacteristic != null
+                            ? Colors.green.shade100
+                            : Colors.red.shade100)),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Row(
                 children: [
                   Icon(
-                    isDiscovering
-                        ? Icons.hourglass_empty
-                        : (_textCharacteristic != null
-                            ? Icons.check_circle
-                            : Icons.error),
-                    color: isDiscovering
-                        ? Colors.orange
-                        : (_textCharacteristic != null
-                            ? Colors.green
-                            : Colors.red),
+                    !isConnected
+                        ? Icons.bluetooth_disabled
+                        : (isDiscovering
+                            ? Icons.hourglass_empty
+                            : (_textCharacteristic != null
+                                ? Icons.check_circle
+                                : Icons.error)),
+                    color: !isConnected
+                        ? Colors.red
+                        : (isDiscovering
+                            ? Colors.orange
+                            : (_textCharacteristic != null
+                                ? Colors.green
+                                : Colors.red)),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -446,37 +505,45 @@ class _DeviceControlPageState extends State<DeviceControlPage> {
                 hintText: 'Type a message...',
               ),
               maxLength: 100,
-              enabled: _textCharacteristic != null && !isDiscovering,
+              enabled: isConnected && _textCharacteristic != null && !isDiscovering,
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
-              onPressed: (_textCharacteristic != null && !isDiscovering)
+              onPressed: (isConnected && _textCharacteristic != null && !isDiscovering)
                   ? _sendText
                   : null,
               icon: const Icon(Icons.send),
-              label: const Text('Send to Display'),
+              label: Text(isConnected ? 'Send to Display' : 'Disconnected'),
               style: ElevatedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 50),
-                backgroundColor: Colors.blue,
+                backgroundColor: isConnected ? Colors.blue : Colors.grey,
                 foregroundColor: Colors.white,
               ),
             ),
             const SizedBox(height: 24),
 
             // Info text
-            const Expanded(
+            SizedBox(
+              height: 150,
               child: Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.info_outline, size: 48, color: Colors.grey),
-                    SizedBox(height: 16),
+                    Icon(
+                      isConnected ? Icons.info_outline : Icons.warning_amber_rounded,
+                      size: 48,
+                      color: isConnected ? Colors.grey : Colors.red,
+                    ),
+                    const SizedBox(height: 16),
                     Text(
-                      'Your text will be sent to the ESP32 display',
+                      isConnected
+                          ? 'Your text will be sent to the ESP32 display'
+                          : 'Connection lost. Returning to scanner...',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: Colors.grey,
+                        color: isConnected ? Colors.grey : Colors.red,
                         fontSize: 14,
+                        fontWeight: isConnected ? FontWeight.normal : FontWeight.bold,
                       ),
                     ),
                   ],

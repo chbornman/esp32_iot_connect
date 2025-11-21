@@ -45,9 +45,9 @@
 #define PIN_NUM_RST    21
 #define PIN_NUM_BK_LIGHT 22
 
-// Display size for 1.47" ST7789
-#define LCD_H_RES      172
-#define LCD_V_RES      320
+// Display size for 1.47" ST7789 (rotated 90 degrees)
+#define LCD_H_RES      320
+#define LCD_V_RES      172
 
 static const char *TAG = "BLE_LCD";
 
@@ -497,13 +497,13 @@ void init_lcd(void)
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle));
 
-    ESP_LOGI(TAG, "Initialize LCD panel");
+    ESP_LOGI(TAG, "Initialize LCD panel (90 degree rotation)");
     ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
-    ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel_handle, false));
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, false, false));
+    ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel_handle, true));  // Rotate 90 degrees
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, false, true));  // Mirror Y for correct orientation
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_handle, true));
-    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel_handle, 34, 0));
+    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel_handle, 0, 34));  // Swap gap for rotation
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
     // Turn on backlight
@@ -567,8 +567,8 @@ void init_lvgl(void)
     text_label = lv_label_create(screen_obj);
     lv_label_set_text(text_label, "Ready");
     lv_obj_set_style_text_color(text_label, lv_color_hex(COLOR_WHITE), 0);
-    // Use default LVGL font (montserrat 14 is always available)
-    lv_obj_set_width(text_label, LCD_H_RES - 20);  // Leave margin
+    lv_obj_set_style_text_font(text_label, &lv_font_montserrat_24, 0);  // 24pt font (enabled via sdkconfig)
+    lv_obj_set_width(text_label, LCD_H_RES - 40);  // Wider margin for better readability
     lv_label_set_long_mode(text_label, LV_LABEL_LONG_WRAP);
     lv_obj_center(text_label);
 
