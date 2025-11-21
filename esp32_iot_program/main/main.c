@@ -73,13 +73,18 @@ static lv_color_t *buf2 = NULL;
 static lv_obj_t *text_label = NULL;
 static lv_obj_t *screen_obj = NULL;
 
+// Function declarations
+void lcd_clear_screen(uint16_t color);
+void lcd_clear_screen_rgb888(uint32_t rgb888);
+void lcd_display_text(const char *text);
+
 // BLE Definitions
 #define GATTS_SERVICE_UUID   0x00FF
 #define GATTS_CHAR_UUID_COLOR 0xFF01
 #define GATTS_CHAR_UUID_TEXT  0xFF02
 #define GATTS_NUM_HANDLE     8
 
-#define DEVICE_NAME          "ESP32_IoT_Display"
+#define DEVICE_NAME          "SusanESP"
 #define GATTS_DEMO_CHAR_VAL_LEN_MAX 100
 
 static uint8_t adv_config_done = 0;
@@ -209,7 +214,7 @@ void lcd_clear_screen(uint16_t color)
         uint8_t g8 = (g6 << 2) | (g6 >> 4);
         uint8_t b8 = (b5 << 3) | (b5 >> 2);
 
-        // Create 24-bit RGB888 hex value for lv_color_hex()
+        // Create RGB888 hex value (driver handles BGR conversion)
         uint32_t rgb888 = (r8 << 16) | (g8 << 8) | b8;
 
         lv_color_t lv_color = lv_color_hex(rgb888);
@@ -220,6 +225,20 @@ void lcd_clear_screen(uint16_t color)
         lv_refr_now(NULL);
 
         ESP_LOGI(TAG, "Screen cleared to color: RGB565=0x%04X, RGB888=0x%06X", color, (unsigned int)rgb888);
+    }
+}
+
+void lcd_clear_screen_rgb888(uint32_t rgb888)
+{
+    if (screen_obj) {
+        // Use RGB888 directly - LCD driver handles BGR conversion automatically
+        lv_color_t lv_color = lv_color_hex(rgb888);
+        lv_obj_set_style_bg_color(screen_obj, lv_color, 0);
+
+        // Force LVGL to refresh the display
+        lv_refr_now(NULL);
+
+        ESP_LOGI(TAG, "Screen cleared to color: RGB888=0x%06X", (unsigned int)rgb888);
     }
 }
 
@@ -272,7 +291,7 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
             ESP_LOGI(TAG, "║  BLE ADVERTISING STARTED                   ║");
             ESP_LOGI(TAG, "╚════════════════════════════════════════════╝");
             ESP_LOGI(TAG, "  Device is now visible to Flutter app!");
-            ESP_LOGI(TAG, "  Look for: 'ESP32_IoT_Display'");
+            ESP_LOGI(TAG, "  Look for: 'SusanESP'");
             ESP_LOGI(TAG, "  Service UUID: 0x00FF");
             ESP_LOGI(TAG, "");
         }
@@ -380,23 +399,17 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                 // Skip '#' if present
                 char *hex_start = (hex_str[0] == '#') ? hex_str + 1 : hex_str;
 
-                // Parse RGB888 hex string
+                // Parse RGB888 hex string and use directly (no RGB565 conversion!)
                 uint32_t rgb888 = strtol(hex_start, NULL, 16);
                 uint8_t r8 = (rgb888 >> 16) & 0xFF;
                 uint8_t g8 = (rgb888 >> 8) & 0xFF;
                 uint8_t b8 = rgb888 & 0xFF;
 
-                // Convert RGB888 to RGB565
-                uint16_t r5 = (r8 >> 3) & 0x1F;
-                uint16_t g6 = (g8 >> 2) & 0x3F;
-                uint16_t b5 = (b8 >> 3) & 0x1F;
-                uint16_t color = (r5 << 11) | (g6 << 5) | b5;
-
-                ESP_LOGI(TAG, "  -> Hex format: %s -> RGB888(0x%06X) -> RGB565(0x%04X)",
-                         hex_str, (unsigned int)rgb888, color);
+                ESP_LOGI(TAG, "  -> Hex format: %s -> RGB888(0x%06X)", hex_str, (unsigned int)rgb888);
                 ESP_LOGI(TAG, "     RGB888: R=%d, G=%d, B=%d", r8, g8, b8);
-                ESP_LOGI(TAG, "     RGB565: R=%d, G=%d, B=%d", r5, g6, b5);
-                lcd_clear_screen(color);
+
+                // Use RGB888 directly - LVGL will handle the conversion internally
+                lcd_clear_screen_rgb888(rgb888);
             } else {
                 ESP_LOGW(TAG, "  -> ERROR: Invalid color data length: %d (expected 2 for RGB565 or 6/7 for hex)", param->write.len);
             }
@@ -531,7 +544,7 @@ void init_lcd(void)
     ESP_LOGI(TAG, "Install ST7789 panel driver");
     esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num = PIN_NUM_RST,
-        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,  // Standard RGB order
         .bits_per_pixel = 16,
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle));
@@ -599,13 +612,15 @@ void init_lvgl(void)
 
     // Create screen and label
     screen_obj = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(screen_obj, lv_color_hex(COLOR_BLACK), 0);
+    // Use RGB888 black (0x000000) for proper color handling
+    lv_obj_set_style_bg_color(screen_obj, lv_color_hex(0x000000), 0);
     lv_scr_load(screen_obj);
 
     // Create text label
     text_label = lv_label_create(screen_obj);
     lv_label_set_text(text_label, "Ready");
-    lv_obj_set_style_text_color(text_label, lv_color_hex(COLOR_WHITE), 0);
+    // Use RGB888 white (0xFFFFFF) instead of RGB565 (0xFFFF) for proper white color
+    lv_obj_set_style_text_color(text_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_font(text_label, &lv_font_montserrat_24, 0);  // 24pt font (enabled via sdkconfig)
     lv_obj_set_width(text_label, LCD_H_RES - 40);  // Wider margin for better readability
     lv_label_set_long_mode(text_label, LV_LABEL_LONG_WRAP);
