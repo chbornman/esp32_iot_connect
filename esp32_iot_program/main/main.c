@@ -72,11 +72,23 @@ static lv_color_t *buf1 = NULL;
 static lv_color_t *buf2 = NULL;
 static lv_obj_t *text_label = NULL;
 static lv_obj_t *screen_obj = NULL;
+static lv_obj_t *status_indicator = NULL;
+
+// Status indicator state
+typedef enum {
+    STATUS_DISCONNECTED,  // Red
+    STATUS_ADVERTISING,   // Flashing blue
+    STATUS_CONNECTED      // Green
+} connection_status_t;
+
+static connection_status_t current_status = STATUS_DISCONNECTED;
+static bool indicator_flash_state = false;
 
 // Function declarations
 void lcd_clear_screen(uint16_t color);
 void lcd_clear_screen_rgb888(uint32_t rgb888);
 void lcd_display_text(const char *text);
+void set_connection_status(connection_status_t status);
 
 // BLE Definitions
 #define GATTS_SERVICE_UUID   0x00FF
@@ -272,6 +284,45 @@ void lcd_display_text(const char *text)
     }
 }
 
+void set_connection_status(connection_status_t status)
+{
+    current_status = status;
+    indicator_flash_state = false;
+
+    if (status_indicator != NULL) {
+        switch (status) {
+            case STATUS_DISCONNECTED:
+                lv_obj_set_style_bg_color(status_indicator, lv_color_hex(0xFF0000), 0);  // Red
+                break;
+            case STATUS_ADVERTISING:
+                lv_obj_set_style_bg_color(status_indicator, lv_color_hex(0x0000FF), 0);  // Blue
+                break;
+            case STATUS_CONNECTED:
+                lv_obj_set_style_bg_color(status_indicator, lv_color_hex(0x00FF00), 0);  // Green
+                break;
+        }
+        lv_refr_now(NULL);
+    }
+}
+
+// Task to handle indicator flashing
+static void status_indicator_task(void *pvParameter)
+{
+    while (1) {
+        if (current_status == STATUS_ADVERTISING && status_indicator != NULL) {
+            // Flash blue when advertising
+            if (indicator_flash_state) {
+                lv_obj_set_style_bg_color(status_indicator, lv_color_hex(0x0000FF), 0);  // Blue
+            } else {
+                lv_obj_set_style_bg_color(status_indicator, lv_color_hex(0x000000), 0);  // Black (off)
+            }
+            indicator_flash_state = !indicator_flash_state;
+            lv_refr_now(NULL);
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));  // Flash every 500ms
+    }
+}
+
 // BLE Event Handlers
 static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
 {
@@ -294,6 +345,8 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
             ESP_LOGI(TAG, "  Look for: 'SusanESP'");
             ESP_LOGI(TAG, "  Service UUID: 0x00FF");
             ESP_LOGI(TAG, "");
+            // Update status indicator to flashing blue (advertising)
+            set_connection_status(STATUS_ADVERTISING);
         }
         break;
     case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
@@ -452,10 +505,8 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         ESP_LOGI(TAG, "");
 
         gl_profile_tab[PROFILE_APP_IDX].conn_id = param->connect.conn_id;
-        // Visual feedback: flash green
-        lcd_fill_rect(panel_handle, 0, 0, LCD_H_RES, 30, COLOR_GREEN);
-        vTaskDelay(300 / portTICK_PERIOD_MS);
-        lcd_fill_rect(panel_handle, 0, 0, LCD_H_RES, 30, current_color);
+        // Update status indicator to green (connected)
+        set_connection_status(STATUS_CONNECTED);
         break;
 
     case ESP_GATTS_DISCONNECT_EVT:
@@ -474,10 +525,8 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         ESP_LOGI(TAG, "");
 
         esp_ble_gap_start_advertising(&adv_params);
-        // Visual feedback: flash red
-        lcd_fill_rect(panel_handle, 0, 0, LCD_H_RES, 30, COLOR_RED);
-        vTaskDelay(300 / portTICK_PERIOD_MS);
-        lcd_fill_rect(panel_handle, 0, 0, LCD_H_RES, 30, current_color);
+        // Update status indicator to flashing blue (advertising again)
+        set_connection_status(STATUS_ADVERTISING);
         break;
 
     default:
@@ -630,10 +679,22 @@ void init_lvgl(void)
 
     lv_obj_center(text_label);
 
+    // Create connection status indicator in top right corner
+    status_indicator = lv_obj_create(screen_obj);
+    lv_obj_set_size(status_indicator, 20, 20);  // 20x20 circle
+    lv_obj_align(status_indicator, LV_ALIGN_TOP_RIGHT, -10, 10);  // 10px from top and right edges
+    lv_obj_set_style_radius(status_indicator, LV_RADIUS_CIRCLE, 0);  // Make it circular
+    lv_obj_set_style_bg_color(status_indicator, lv_color_hex(0xFF0000), 0);  // Start red (not connected)
+    lv_obj_set_style_border_color(status_indicator, lv_color_hex(0x000000), 0);  // Black outline
+    lv_obj_set_style_border_width(status_indicator, 2, 0);  // 2px border width
+
     ESP_LOGI(TAG, "LVGL UI created");
 
     // Start LVGL task
     xTaskCreate(lvgl_task, "LVGL_Task", 4096, NULL, 5, NULL);
+
+    // Start status indicator task
+    xTaskCreate(status_indicator_task, "Status_Indicator_Task", 2048, NULL, 4, NULL);
 
     ESP_LOGI(TAG, "LVGL initialized successfully!");
 }
